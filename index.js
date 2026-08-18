@@ -1,23 +1,55 @@
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const fs = require('fs');
-const qrcode = require('qrcode-terminal');
 const express = require('express');
 
-// --- 1. SERVIDOR HTTP OBLIGATORIO PARA RENDER ---
+// --- VARIABLES GLOBALES Y SERVIDOR WEB ---
 const app = express();
 const PORT = process.env.PORT || 10000;
 
+let currentQR = null;
+let isConnected = false;
+
+// Página web para escanear el QR desde el navegador
 app.get('/', (req, res) => {
-    res.send('🤖 Bot de WhatsApp activo y ejecutándose en Render.');
+    if (isConnected) {
+        return res.send(`
+            <div style="text-align:center; font-family:sans-serif; margin-top:50px;">
+                <h1 style="color:#25D366; font-size: 32px;">✅ BOT CONECTADO A WHATSAPP</h1>
+                <p style="font-size: 18px; color: #555;">El servicio de respuestas automáticas se encuentra activo.</p>
+            </div>
+        `);
+    }
+
+    if (currentQR) {
+        const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(currentQR)}`;
+        return res.send(`
+            <div style="text-align:center; font-family:sans-serif; margin-top:40px;">
+                <h1 style="color:#075e54;">🤖 WhatsApp Bot Auto-Responder</h1>
+                <p style="font-size: 16px;">Escanea este código QR desde tu celular (<strong>WhatsApp > Dispositivos vinculados</strong>):</p>
+                <div style="margin: 20px auto; display: inline-block; padding: 15px; background: white; border: 4px solid #25D366; border-radius: 15px;">
+                    <img src="${qrImageUrl}" alt="Código QR WhatsApp" style="width:300px; height:300px;" />
+                </div>
+                <p style="color: #888; font-size: 13px;">La página se actualizará automáticamente si cambia el código.</p>
+                <script>setTimeout(() => location.reload(), 15000);</script>
+            </div>
+        `);
+    }
+
+    return res.send(`
+        <div style="text-align:center; font-family:sans-serif; margin-top:50px;">
+            <h2>⏳ Generando código QR...</h2>
+            <p>Por favor espera unos segundos y refresca la página.</p>
+            <script>setTimeout(() => location.reload(), 3000);</script>
+        </div>
+    `);
 });
 
-// Escuchar en 0.0.0.0 para que Render detecte el puerto inmediatamente
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🌐 Servidor HTTP iniciado exitosamente en el puerto ${PORT}`);
+    console.log(`🌐 Servidor HTTP corriendo en el puerto ${PORT}`);
 });
 
-// --- 2. GESTIÓN Y GUARDADO DE RESPUESTAS ---
+// --- GESTIÓN DE RESPUESTAS AUTOMÁTICAS ---
 const RESPUESTAS_FILE = './respuestas.json';
 let respuestasBot = {};
 
@@ -42,7 +74,7 @@ function guardarRespuestas() {
 
 const PREFIX = '.';
 
-// --- 3. LÓGICA Y CONEXIÓN DEL BOT DE WHATSAPP ---
+// --- CONEXIÓN DE WHATSAPP ---
 async function iniciarBot() {
     const { state, saveCreds } = await useMultiFileAuthState('sesion_whatsapp');
 
@@ -57,24 +89,26 @@ async function iniciarBot() {
     sock.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect, qr } = update;
 
-        // Mostrar código QR en la consola/logs de Render
         if (qr) {
-            console.log('\n========================================');
-            console.log('📲 ESCANEA ESTE CÓDIGO QR EN TU WHATSAPP:');
-            console.log('========================================\n');
-            qrcode.generate(qr, { small: true });
+            currentQR = qr;
+            isConnected = false;
+            console.log('📌 Nuevo código QR generado. Disponible en el sitio web.');
         }
 
         if (connection === 'close') {
+            isConnected = false;
             const reconectar = (lastDisconnect?.error)?.output?.statusCode !== DisconnectReason.loggedOut;
             if (reconectar) {
                 console.log('🔄 Reconectando bot...');
                 iniciarBot();
             } else {
-                console.log('❌ Sesión cerrada. Si deseas reconectar, limpia la carpeta sesion_whatsapp.');
+                currentQR = null;
+                console.log('❌ Sesión cerrada permanentemente.');
             }
         } else if (connection === 'open') {
-            console.log('✅ Bot de Auto-Respuesta Conectado Correctamente.');
+            isConnected = true;
+            currentQR = null;
+            console.log('✅ Bot Conectado a WhatsApp con éxito.');
         }
     });
 
@@ -95,7 +129,7 @@ async function iniciarBot() {
             const command = args.shift().toLowerCase();
             const contenido = args.join(' ');
 
-            // AGREGAR: .add pregunta | respuesta
+            // AGREGAR: .add palabra | respuesta
             if (command === 'add' || command === 'agregar') {
                 const partes = contenido.split('|');
                 if (partes.length < 2) {
@@ -115,7 +149,7 @@ async function iniciarBot() {
                 }, { quoted: m });
             }
 
-            // ELIMINAR: .del pregunta
+            // ELIMINAR: .del palabra
             if (command === 'del' || command === 'eliminar') {
                 const preguntaAEliminar = contenido.trim().toLowerCase();
                 if (respuestasBot[preguntaAEliminar]) {
