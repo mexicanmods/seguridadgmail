@@ -3,14 +3,13 @@ const pino = require('pino');
 const fs = require('fs');
 const express = require('express');
 
-// --- VARIABLES GLOBALES Y SERVIDOR WEB ---
+// --- 1. SERVIDOR HTTP PARA MANTENER RENDER ACTIVO Y MOSTRAR CÓDIGO QR ---
 const app = express();
 const PORT = process.env.PORT || 10000;
 
 let currentQR = null;
 let isConnected = false;
 
-// Página web para escanear el QR desde el navegador
 app.get('/', (req, res) => {
     if (isConnected) {
         return res.send(`
@@ -49,7 +48,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🌐 Servidor HTTP corriendo en el puerto ${PORT}`);
 });
 
-// --- GESTIÓN DE RESPUESTAS AUTOMÁTICAS ---
+// --- 2. GESTIÓN Y BASE DE DATOS DE RESPUESTAS AUTOMÁTICAS ---
 const RESPUESTAS_FILE = './respuestas.json';
 let respuestasBot = {};
 
@@ -74,7 +73,7 @@ function guardarRespuestas() {
 
 const PREFIX = '.';
 
-// --- CONEXIÓN DE WHATSAPP ---
+// --- 3. CONEXIÓN Y EVENTOS DE WHATSAPP ---
 async function iniciarBot() {
     const { state, saveCreds } = await useMultiFileAuthState('sesion_whatsapp');
 
@@ -92,7 +91,7 @@ async function iniciarBot() {
         if (qr) {
             currentQR = qr;
             isConnected = false;
-            console.log('📌 Nuevo código QR generado. Disponible en el sitio web.');
+            console.log('📌 Nuevo código QR generado. Disponible en la página web.');
         }
 
         if (connection === 'close') {
@@ -115,15 +114,18 @@ async function iniciarBot() {
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
         if (type !== 'notify') return;
         const m = messages[0];
-        if (!m.message || m.key.fromMe || m.key.remoteJid === 'status@broadcast') return;
+        if (!m.message || m.key.remoteJid === 'status@broadcast') return;
 
         const from = m.key.remoteJid;
+        const esMio = m.key.fromMe; // Detecta si el mensaje fue enviado por ti
         const textoCliente = (m.message.conversation || 
                              m.message.extendedTextMessage?.text || '').trim();
 
         if (!textoCliente) return;
 
-        // --- COMANDOS PARA TI DESDE WHATSAPP ---
+        // ===================================================
+        // ⚙️ PANEL DE CONTROL (PERMITE COMANDOS PROPIOS)
+        // ===================================================
         if (textoCliente.startsWith(PREFIX)) {
             const args = textoCliente.slice(PREFIX.length).trim().split(/ +/);
             const command = args.shift().toLowerCase();
@@ -177,13 +179,19 @@ async function iniciarBot() {
             }
         }
 
-        // --- RESPUESTA AUTOMÁTICA AL CLIENTE ---
+        // ===================================================
+        // 🤖 RESPUESTA AUTOMÁTICA AL CLIENTE
+        // ===================================================
+        if (esMio) return; // Ignora tus mensajes normales para que el bot no se responda solo
+
         const mensajeEnMinusculas = textoCliente.toLowerCase();
 
+        // 1. Coincidencia exacta
         if (respuestasBot[mensajeEnMinusculas]) {
             return await sock.sendMessage(from, { text: respuestasBot[mensajeEnMinusculas] }, { quoted: m });
         }
 
+        // 2. Coincidencia si la frase contiene la palabra clave
         for (const clave in respuestasBot) {
             if (mensajeEnMinusculas.includes(clave)) {
                 return await sock.sendMessage(from, { text: respuestasBot[clave] }, { quoted: m });
