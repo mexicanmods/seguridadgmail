@@ -2,8 +2,10 @@ const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = requi
 const pino = require('pino');
 const fs = require('fs');
 const express = require('express');
+const https = require('https');
+const http = require('http');
 
-// --- 1. SERVIDOR HTTP PARA MANTENER RENDER ACTIVO Y MOSTRAR CÓDIGO QR ---
+// --- 1. SERVIDOR HTTP Y KEEP-ALIVE ---
 const app = express();
 const PORT = process.env.PORT || 10000;
 
@@ -15,7 +17,7 @@ app.get('/', (req, res) => {
         return res.send(`
             <div style="text-align:center; font-family:sans-serif; margin-top:50px;">
                 <h1 style="color:#25D366; font-size: 32px;">✅ BOT CONECTADO A WHATSAPP</h1>
-                <p style="font-size: 18px; color: #555;">El servicio de respuestas automáticas se encuentra activo.</p>
+                <p style="font-size: 18px; color: #555;">El servicio de respuestas automáticas se encuentra activo 24/7.</p>
             </div>
         `);
     }
@@ -46,9 +48,22 @@ app.get('/', (req, res) => {
 
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`🌐 Servidor HTTP corriendo en el puerto ${PORT}`);
+    
+    // Auto-ping interno cada 10 minutos para mantener Render encendido 24/7
+    setInterval(() => {
+        const renderUrl = process.env.RENDER_EXTERNAL_URL;
+        if (renderUrl) {
+            const client = renderUrl.startsWith('https') ? https : http;
+            client.get(renderUrl, (res) => {
+                console.log(`⏰ [Keep-Alive] Ping enviado a ${renderUrl} - Estado: ${res.statusCode}`);
+            }).on('error', (err) => {
+                console.log(`⚠️ [Keep-Alive] Error al enviar ping: ${err.message}`);
+            });
+        }
+    }, 10 * 60 * 1000);
 });
 
-// --- 2. GESTIÓN Y BASE DE DATOS DE RESPUESTAS AUTOMÁTICAS ---
+// --- 2. GESTIÓN DE RESPUESTAS AUTOMÁTICAS ---
 const RESPUESTAS_FILE = './respuestas.json';
 let respuestasBot = {};
 
@@ -60,9 +75,8 @@ if (fs.existsSync(RESPUESTAS_FILE)) {
     }
 } else {
     respuestasBot = {
-        "hola": "¡Hola! 👋 ¿En qué te puedo ayudar hoy?",
-        "precio": "El costo del servicio es de $200 MXN.",
-        "horario": "Atendemos de Lunes a Viernes de 9:00 AM a 6:00 PM."
+        "hola": { text: "¡Hola! 👋 ¿En qué te puedo ayudar hoy?" },
+        "precio": { text: "El costo del servicio es de $200 MXN." }
     };
     guardarRespuestas();
 }
@@ -117,7 +131,7 @@ async function iniciarBot() {
         if (!m.message || m.key.remoteJid === 'status@broadcast') return;
 
         const from = m.key.remoteJid;
-        const esMio = m.key.fromMe; // Detecta si el mensaje fue enviado por ti
+        const esMio = m.key.fromMe;
         const textoCliente = (m.message.conversation || 
                              m.message.extendedTextMessage?.text || '').trim();
 
@@ -127,31 +141,38 @@ async function iniciarBot() {
         // ⚙️ PANEL DE CONTROL (RESTRINGIDO SOLO PARA TI)
         // ===================================================
         if (textoCliente.startsWith(PREFIX)) {
-            // SEGURIDAD: Si el mensaje no fue enviado por ti, el bot lo ignora completamente
+            // Si el mensaje NO proviene de tu propio chat, se ignora
             if (!esMio) return;
 
             const args = textoCliente.slice(PREFIX.length).trim().split(/ +/);
             const command = args.shift().toLowerCase();
             const contenido = args.join(' ');
 
-            // AGREGAR: .add palabra | respuesta
+            // AGREGAR: .add palabra | respuesta texto | URL_imagen (opcional)
             if (command === 'add' || command === 'agregar') {
                 const partes = contenido.split('|');
                 if (partes.length < 2) {
                     return sock.sendMessage(from, { 
-                        text: `⚠️ *Formato incorrecto.*\nUsa: .add <palabra> | <respuesta>\n\n*Ejemplo:*\n.add precio | $200 MXN` 
+                        text: `⚠️ *Formato incorrecto.*\n\n*Texto solo:*\n.add palabra | respuesta\n\n*Texto con Imagen:*\n.add palabra | respuesta | https://enlace_de_la_imagen.jpg` 
                     }, { quoted: m });
                 }
 
                 const pregunta = partes[0].trim().toLowerCase();
-                const respuesta = partes.slice(1).join('|').trim();
+                const respuestaTexto = partes[1].trim();
+                const urlImagen = partes[2] ? partes[2].trim() : null;
 
-                respuestasBot[pregunta] = respuesta;
+                respuestasBot[pregunta] = {
+                    text: respuestaTexto,
+                    image: urlImagen
+                };
                 guardarRespuestas();
 
-                return sock.sendMessage(from, { 
-                    text: `✅ *Guardado con éxito.*\n\n📌 *Palabra:* ${pregunta}\n💬 *Respuesta:* ${respuesta}` 
-                }, { quoted: m });
+                let mensajeConfirmacion = `✅ *Guardado con éxito.*\n\n📌 *Palabra:* ${pregunta}\n💬 *Respuesta:* ${respuestaTexto}`;
+                if (urlImagen) {
+                    mensajeConfirmacion += `\n🖼️ *Imagen:* ${urlImagen}`;
+                }
+
+                return sock.sendMessage(from, { text: mensajeConfirmacion }, { quoted: m });
             }
 
             // ELIMINAR: .del palabra
@@ -175,7 +196,10 @@ async function iniciarBot() {
 
                 let lista = `📋 *CATÁLOGO DE RESPUESTAS AUTOMÁTICAS*\n\n`;
                 llaves.forEach((p, index) => {
-                    lista += `*${index + 1}. Palabra clave:* ${p}\n💬 *Respuesta:* ${respuestasBot[p]}\n\n`;
+                    const datos = respuestasBot[p];
+                    const texto = typeof datos === 'string' ? datos : datos.text;
+                    const tieneImagen = typeof datos === 'object' && datos.image ? ' 🖼️ (Con Imagen)' : '';
+                    lista += `*${index + 1}. Palabra clave:* ${p}${tieneImagen}\n💬 *Respuesta:* ${texto}\n\n`;
                 });
 
                 return sock.sendMessage(from, { text: lista }, { quoted: m });
@@ -183,21 +207,42 @@ async function iniciarBot() {
         }
 
         // ===================================================
-        // 🤖 RESPUESTA AUTOMÁTICA AL CLIENTE
+        // 🤖 RESPUESTAS AUTOMÁTICAS A CLIENTES
         // ===================================================
-        if (esMio) return; // Ignora tus mensajes normales para que el bot no se responda a sí mismo
+        if (esMio) return; // Evita que se responda a ti mismo en conversaciones normales
 
         const mensajeEnMinusculas = textoCliente.toLowerCase();
 
+        // Función para enviar respuesta (Soporta Texto o Texto + Imagen)
+        const enviarRespuesta = async (clave) => {
+            const data = respuestasBot[clave];
+            
+            // Compatibilidad si la respuesta es de texto simple antiguo
+            if (typeof data === 'string') {
+                return await sock.sendMessage(from, { text: data }, { quoted: m });
+            }
+
+            // Si incluye enlace de imagen
+            if (data.image) {
+                return await sock.sendMessage(from, {
+                    image: { url: data.image },
+                    caption: data.text
+                }, { quoted: m });
+            }
+
+            // Si es solo texto
+            return await sock.sendMessage(from, { text: data.text }, { quoted: m });
+        };
+
         // 1. Coincidencia exacta
         if (respuestasBot[mensajeEnMinusculas]) {
-            return await sock.sendMessage(from, { text: respuestasBot[mensajeEnMinusculas] }, { quoted: m });
+            return await enviarRespuesta(mensajeEnMinusculas);
         }
 
         // 2. Coincidencia si la frase contiene la palabra clave
         for (const clave in respuestasBot) {
             if (mensajeEnMinusculas.includes(clave)) {
-                return await sock.sendMessage(from, { text: respuestasBot[clave] }, { quoted: m });
+                return await enviarRespuesta(clave);
             }
         }
     });
