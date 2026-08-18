@@ -1,60 +1,23 @@
-const { execSync } = require('child_process');
-const fs = require('fs');
-
-// --- 1. CONFIGURACIÓN E INSTALACIÓN AUTOMÁTICA DE DEPENDENCIAS ---
-const packageJsonFile = './package.json';
-
-if (!fs.existsSync(packageJsonFile)) {
-    console.log('📦 Generando package.json...');
-    const packageData = {
-        name: "whatsapp-bot-autoresponder",
-        version: "1.0.0",
-        description: "Bot de WhatsApp auto-responder para Render",
-        main: "index.js",
-        scripts: {
-            start: "node index.js"
-        },
-        dependencies: {
-            "@whiskeysockets/baileys": "^6.6.0",
-            "express": "^4.19.2",
-            "pino": "^8.20.0",
-            "qrcode-terminal": "^0.12.0"
-        }
-    };
-    fs.writeFileSync(packageJsonFile, JSON.stringify(packageData, null, 2));
-}
-
-// Instalar librerías si aún no están descargadas
-try {
-    require('@whiskeysockets/baileys');
-    require('express');
-    require('qrcode-terminal');
-    require('pino');
-} catch (e) {
-    console.log('⏳ Instalando dependencias necesarias...');
-    execSync('npm install', { stdio: 'inherit' });
-    console.log('✅ Dependencias instaladas correctamente.');
-}
-
-// --- 2. IMPORTACIÓN DE MÓDULOS ---
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const pino = require('pino');
+const fs = require('fs');
 const qrcode = require('qrcode-terminal');
 const express = require('express');
 
-// --- 3. SERVIDOR HTTP PARA MANTENER RENDER ACTIVO (SOLUCIONA "NO OPEN PORTS") ---
+// --- 1. SERVIDOR HTTP OBLIGATORIO PARA RENDER ---
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 
 app.get('/', (req, res) => {
     res.send('🤖 Bot de WhatsApp activo y ejecutándose en Render.');
 });
 
-app.listen(PORT, () => {
-    console.log(`🌐 Servidor web escuchando en el puerto ${PORT}`);
+// Escuchar en 0.0.0.0 para que Render detecte el puerto inmediatamente
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🌐 Servidor HTTP iniciado exitosamente en el puerto ${PORT}`);
 });
 
-// --- 4. GESTIÓN Y GUARDADO DE PREGUNTAS Y RESPUESTAS ---
+// --- 2. GESTIÓN Y GUARDADO DE RESPUESTAS ---
 const RESPUESTAS_FILE = './respuestas.json';
 let respuestasBot = {};
 
@@ -79,7 +42,7 @@ function guardarRespuestas() {
 
 const PREFIX = '.';
 
-// --- 5. LÓGICA Y CONEXIÓN DEL BOT DE WHATSAPP ---
+// --- 3. LÓGICA Y CONEXIÓN DEL BOT DE WHATSAPP ---
 async function iniciarBot() {
     const { state, saveCreds } = await useMultiFileAuthState('sesion_whatsapp');
 
@@ -94,7 +57,7 @@ async function iniciarBot() {
     sock.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect, qr } = update;
 
-        // Mostrar código QR en los logs de Render
+        // Mostrar código QR en la consola/logs de Render
         if (qr) {
             console.log('\n========================================');
             console.log('📲 ESCANEA ESTE CÓDIGO QR EN TU WHATSAPP:');
@@ -108,7 +71,7 @@ async function iniciarBot() {
                 console.log('🔄 Reconectando bot...');
                 iniciarBot();
             } else {
-                console.log('❌ Sesión cerrada. Elimina la carpeta sesion_whatsapp y vuelve a escanear.');
+                console.log('❌ Sesión cerrada. Si deseas reconectar, limpia la carpeta sesion_whatsapp.');
             }
         } else if (connection === 'open') {
             console.log('✅ Bot de Auto-Respuesta Conectado Correctamente.');

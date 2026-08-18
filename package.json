@@ -1,7 +1,7 @@
 {
   "name": "whatsapp-bot-autoresponder",
   "version": "1.0.0",
-  "description": "Bot de respuestas automaticas editables desde WhatsApp",
+  "description": "Bot de WhatsApp auto-responder para Render",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
