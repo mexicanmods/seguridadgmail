@@ -9,10 +9,10 @@ const express = require('express');
 const pino = require('pino');
 const yts = require('yt-search');
 const ytdl = require('@distube/ytdl-core');
-const puppeteer = require('puppeteer');
+const axios = require('axios');
 const { Sticker, StickerTypes } = require('wa-sticker-formatter');
 
-// --- SERVIDOR EXPRESS (PARA RENDER / RAILWAY / UPTIMEROBOT) ---
+// --- SERVIDOR EXPRESS (KEEPALIVE Y PANEL QR) ---
 const app = express();
 const PORT = process.env.PORT || 3000;
 let currentQR = null;
@@ -43,7 +43,7 @@ app.get('/', (req, res) => {
 
 app.listen(PORT, () => console.log(`Servidor web corriendo en puerto ${PORT}`));
 
-// --- CONFIGURACIÓN BASE Y BASE DE DATOS LOCAL ---
+// --- CONFIGURACIÓN BASE ---
 const BOT_NAME = 'SAMANTHA LA HACKER BOT';
 const PREFIX = '.';
 const usersDB = {};
@@ -72,7 +72,7 @@ async function getAdminStatus(sock, groupId, participantJid) {
     }
 }
 
-// --- CONEXIÓN PRINCIPAL CON WHATSAPP ---
+// --- CONEXIÓN DE WHATSAPP ---
 async function connectToWhatsApp() {
     const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
     const { version } = await fetchLatestBaileysVersion();
@@ -108,7 +108,6 @@ async function connectToWhatsApp() {
         const from = m.key.remoteJid;
         const isGroup = from.endsWith('@g.us');
         const sender = m.key.participant || m.key.remoteJid;
-        const user = getUser(sender);
 
         const body = m.message.conversation ||
                      m.message.extendedTextMessage?.text ||
@@ -122,12 +121,12 @@ async function connectToWhatsApp() {
         const text = args.join(' ');
 
         // ==========================================
-        // 📄 COMANDO: .curp (CONSULTA Y DESCARGA RENAPO)
+        // 📄 COMANDO: .curp (CONSULTA VÍA API REST / ENDPOINT)
         // ==========================================
         if (command === 'curp') {
             if (!text) {
                 return sock.sendMessage(from, { 
-                    text: `*[${BOT_NAME}]* Ingresa una CURP válida.\n\n*Ejemplo:* .curp ABCD123456HDFRRX01` 
+                    text: `*[${BOT_NAME}]* Por favor ingresa la CURP de 18 caracteres.\n\n*Ejemplo:* .curp ABCD123456HDFRRX01` 
                 }, { quoted: m });
             }
 
@@ -136,70 +135,38 @@ async function connectToWhatsApp() {
 
             if (!regexCURP.test(curpInput)) {
                 return sock.sendMessage(from, { 
-                    text: `❌ *[${BOT_NAME}]* La CURP ingresada no tiene una estructura válida de 18 caracteres.` 
+                    text: `❌ *[${BOT_NAME}]* Formato de CURP inválido. Debe contener exactamente 18 caracteres alfanuméricos.` 
                 }, { quoted: m });
             }
 
             await sock.sendMessage(from, { 
-                text: `🔍 *[${BOT_NAME}]* Conectando con RENAPO... Generando el archivo PDF oficial para: *${curpInput}*` 
+                text: `🔍 *[${BOT_NAME}]* Consultando RENAPO vía API REST... Descargando constancia para: *${curpInput}*` 
             }, { quoted: m });
 
-            let browser;
             try {
-                // Configuración de Puppeteer compatible con local y servidores en la nube
-                browser = await puppeteer.launch({
-                    headless: 'new',
-                    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || null,
-                    args: [
-                        '--no-sandbox',
-                        '--disable-setuid-sandbox',
-                        '--disable-dev-shm-usage',
-                        '--disable-accelerated-2d-canvas',
-                        '--no-first-run',
-                        '--no-zygote',
-                        '--single-process',
-                        '--disable-gpu'
-                    ]
+                // Petición HTTP directa al endpoint de generación/consulta de CURP en PDF
+                const response = await axios.get(`https://api.serviciosmx.net/curp/pdf/${curpInput}`, {
+                    responseType: 'arraybuffer',
+                    timeout: 30000,
+                    headers: {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                    }
                 });
 
-                const page = await browser.newPage();
-                await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+                const pdfBuffer = Buffer.from(response.data, 'binary');
 
-                // Navegar a la página oficial de CURP
-                await page.goto('https://www.gob.mx/curp/', { waitUntil: 'networkidle2', timeout: 60000 });
-
-                // Llenar el formulario con la CURP recibida
-                await page.waitForSelector('#curp', { timeout: 10000 });
-                await page.type('#curp', curpInput);
-
-                // Hacer clic en Buscar
-                await page.click('#searchButton');
-
-                // Esperar a que se procese la descarga del documento
-                await page.waitForSelector('#downloadButton', { timeout: 20000 });
-
-                // Extraer el enlace directo al PDF
-                const pdfUrl = await page.$eval('#downloadButton', el => el.href);
-
-                // Obtener el buffer del PDF generado
-                const response = await page.goto(pdfUrl);
-                const pdfBuffer = await response.buffer();
-
-                await browser.close();
-
-                // Enviar el PDF directamente al chat de WhatsApp
+                // Enviar el PDF como archivo directamente al chat de WhatsApp
                 return await sock.sendMessage(from, {
                     document: pdfBuffer,
                     mimetype: 'application/pdf',
                     fileName: `CURP_${curpInput}.pdf`,
-                    caption: `📄 *[${BOT_NAME}]*\nConstancia Oficial de CURP emitida por RENAPO para: *${curpInput}*`
+                    caption: `📄 *[${BOT_NAME}]*\nConstancia Oficial de CURP emitida para: *${curpInput}*`
                 }, { quoted: m });
 
             } catch (err) {
-                if (browser) await browser.close();
-                console.error('Error procesando CURP:', err);
+                console.error('Error al consultar la API de CURP:', err.message);
                 return sock.sendMessage(from, { 
-                    text: `❌ *[${BOT_NAME}]* Ocurrió un fallo al obtener el documento. Verifica que la CURP esté registrada correctamente o inténtalo más tarde.` 
+                    text: `❌ *[${BOT_NAME}]* No se pudo obtener el PDF. Ocurrió un error en la conexión con la base de datos de RENAPO o el servicio externo de consulta.` 
                 }, { quoted: m });
             }
         }
@@ -211,7 +178,7 @@ async function connectToWhatsApp() {
             if (!text) return sock.sendMessage(from, { text: `*[${BOT_NAME}]* Ingresa el nombre o enlace del audio.` }, { quoted: m });
 
             try {
-                await sock.sendMessage(from, { text: `⏳ *[${BOT_NAME}]* Buscando y procesando audio MP3...` }, { quoted: m });
+                await sock.sendMessage(from, { text: `⏳ *[${BOT_NAME}]* Buscando y descargando audio MP3...` }, { quoted: m });
                 const search = await yts(text);
                 const video = search.videos[0];
                 if (!video) return sock.sendMessage(from, { text: '❌ No se encontraron resultados.' }, { quoted: m });
@@ -238,7 +205,7 @@ async function connectToWhatsApp() {
             if (!text) return sock.sendMessage(from, { text: `*[${BOT_NAME}]* Ingresa el nombre o enlace del video.` }, { quoted: m });
 
             try {
-                await sock.sendMessage(from, { text: `⏳ *[${BOT_NAME}]* Descargando video MP4...` }, { quoted: m });
+                await sock.sendMessage(from, { text: `⏳ *[${BOT_NAME}]* Procesando y bajando video MP4...` }, { quoted: m });
                 const search = await yts(text);
                 const video = search.videos[0];
                 if (!video) return sock.sendMessage(from, { text: '❌ No se encontraron resultados.' }, { quoted: m });
