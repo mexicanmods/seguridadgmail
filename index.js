@@ -124,9 +124,12 @@ async function iniciarBot() {
         if (!textoCliente) return;
 
         // ===================================================
-        // ⚙️ PANEL DE CONTROL (PERMITE COMANDOS PROPIOS)
+        // ⚙️ PANEL DE CONTROL (RESTRINGIDO SOLO PARA TI)
         // ===================================================
         if (textoCliente.startsWith(PREFIX)) {
+            // SEGURIDAD: Si el mensaje no fue enviado por ti, el bot lo ignora completamente
+            if (!esMio) return;
+
             const args = textoCliente.slice(PREFIX.length).trim().split(/ +/);
             const command = args.shift().toLowerCase();
             const contenido = args.join(' ');
@@ -182,7 +185,7 @@ async function iniciarBot() {
         // ===================================================
         // 🤖 RESPUESTA AUTOMÁTICA AL CLIENTE
         // ===================================================
-        if (esMio) return; // Ignora tus mensajes normales para que el bot no se responda solo
+        if (esMio) return; // Ignora tus mensajes normales para que el bot no se responda a sí mismo
 
         const mensajeEnMinusculas = textoCliente.toLowerCase();
 
