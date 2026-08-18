@@ -1,11 +1,61 @@
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
-const pino = require('pino');
+const { execSync } = require('child_process');
 const fs = require('fs');
 
-// Archivo local donde se guardan permanentemente las preguntas y respuestas
-const RESPUESTAS_FILE = './respuestas.json';
+// --- 1. CONFIGURACIÓN E INSTALACIÓN AUTOMÁTICA DE DEPENDENCIAS ---
+const packageJsonFile = './package.json';
 
-// Cargar respuestas existentes o inicializar base de datos
+if (!fs.existsSync(packageJsonFile)) {
+    console.log('📦 Generando package.json...');
+    const packageData = {
+        name: "whatsapp-bot-autoresponder",
+        version: "1.0.0",
+        description: "Bot de WhatsApp auto-responder para Render",
+        main: "index.js",
+        scripts: {
+            start: "node index.js"
+        },
+        dependencies: {
+            "@whiskeysockets/baileys": "^6.6.0",
+            "express": "^4.19.2",
+            "pino": "^8.20.0",
+            "qrcode-terminal": "^0.12.0"
+        }
+    };
+    fs.writeFileSync(packageJsonFile, JSON.stringify(packageData, null, 2));
+}
+
+// Instalar librerías si aún no están descargadas
+try {
+    require('@whiskeysockets/baileys');
+    require('express');
+    require('qrcode-terminal');
+    require('pino');
+} catch (e) {
+    console.log('⏳ Instalando dependencias necesarias...');
+    execSync('npm install', { stdio: 'inherit' });
+    console.log('✅ Dependencias instaladas correctamente.');
+}
+
+// --- 2. IMPORTACIÓN DE MÓDULOS ---
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
+const pino = require('pino');
+const qrcode = require('qrcode-terminal');
+const express = require('express');
+
+// --- 3. SERVIDOR HTTP PARA MANTENER RENDER ACTIVO (SOLUCIONA "NO OPEN PORTS") ---
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.get('/', (req, res) => {
+    res.send('🤖 Bot de WhatsApp activo y ejecutándose en Render.');
+});
+
+app.listen(PORT, () => {
+    console.log(`🌐 Servidor web escuchando en el puerto ${PORT}`);
+});
+
+// --- 4. GESTIÓN Y GUARDADO DE PREGUNTAS Y RESPUESTAS ---
+const RESPUESTAS_FILE = './respuestas.json';
 let respuestasBot = {};
 
 if (fs.existsSync(RESPUESTAS_FILE)) {
@@ -15,7 +65,6 @@ if (fs.existsSync(RESPUESTAS_FILE)) {
         respuestasBot = {};
     }
 } else {
-    // Respuestas iniciales por defecto
     respuestasBot = {
         "hola": "¡Hola! 👋 ¿En qué te puedo ayudar hoy?",
         "precio": "El costo del servicio es de $200 MXN.",
@@ -24,29 +73,43 @@ if (fs.existsSync(RESPUESTAS_FILE)) {
     guardarRespuestas();
 }
 
-// Función para escribir en el archivo JSON
 function guardarRespuestas() {
     fs.writeFileSync(RESPUESTAS_FILE, JSON.stringify(respuestasBot, null, 2));
 }
 
 const PREFIX = '.';
 
+// --- 5. LÓGICA Y CONEXIÓN DEL BOT DE WHATSAPP ---
 async function iniciarBot() {
     const { state, saveCreds } = await useMultiFileAuthState('sesion_whatsapp');
 
     const sock = makeWASocket({
         logger: pino({ level: 'silent' }),
         auth: state,
-        printQRInTerminal: true
+        printQRInTerminal: false
     });
 
     sock.ev.on('creds.update', saveCreds);
 
     sock.ev.on('connection.update', (update) => {
-        const { connection, lastDisconnect } = update;
+        const { connection, lastDisconnect, qr } = update;
+
+        // Mostrar código QR en los logs de Render
+        if (qr) {
+            console.log('\n========================================');
+            console.log('📲 ESCANEA ESTE CÓDIGO QR EN TU WHATSAPP:');
+            console.log('========================================\n');
+            qrcode.generate(qr, { small: true });
+        }
+
         if (connection === 'close') {
             const reconectar = (lastDisconnect?.error)?.output?.statusCode !== DisconnectReason.loggedOut;
-            if (reconectar) iniciarBot();
+            if (reconectar) {
+                console.log('🔄 Reconectando bot...');
+                iniciarBot();
+            } else {
+                console.log('❌ Sesión cerrada. Elimina la carpeta sesion_whatsapp y vuelve a escanear.');
+            }
         } else if (connection === 'open') {
             console.log('✅ Bot de Auto-Respuesta Conectado Correctamente.');
         }
@@ -63,20 +126,18 @@ async function iniciarBot() {
 
         if (!textoCliente) return;
 
-        // ===================================================
-        // ⚙️ PANEL DE CONTROL (COMANDOS PARA TI)
-        // ===================================================
+        // --- COMANDOS PARA TI DESDE WHATSAPP ---
         if (textoCliente.startsWith(PREFIX)) {
             const args = textoCliente.slice(PREFIX.length).trim().split(/ +/);
             const command = args.shift().toLowerCase();
             const contenido = args.join(' ');
 
-            // COMANDO 1: AÑADIR O EDITAR (.add palabra | respuesta)
+            // AGREGAR: .add pregunta | respuesta
             if (command === 'add' || command === 'agregar') {
                 const partes = contenido.split('|');
                 if (partes.length < 2) {
                     return sock.sendMessage(from, { 
-                        text: `⚠️ *Formato incorrecto.*\nUsa: .add <palabra o pregunta> | <respuesta>\n\n*Ejemplo:*\n.add precio | El costo es de $500` 
+                        text: `⚠️ *Formato incorrecto.*\nUsa: .add <palabra> | <respuesta>\n\n*Ejemplo:*\n.add precio | $200 MXN` 
                     }, { quoted: m });
                 }
 
@@ -87,31 +148,27 @@ async function iniciarBot() {
                 guardarRespuestas();
 
                 return sock.sendMessage(from, { 
-                    text: `✅ *Respuesta guardada exitosamente.*\n\n📌 *Palabra clave:* ${pregunta}\n💬 *Respuesta del bot:* ${respuesta}` 
+                    text: `✅ *Guardado con éxito.*\n\n📌 *Palabra:* ${pregunta}\n💬 *Respuesta:* ${respuesta}` 
                 }, { quoted: m });
             }
 
-            // COMANDO 2: ELIMINAR (.del palabra)
+            // ELIMINAR: .del pregunta
             if (command === 'del' || command === 'eliminar') {
                 const preguntaAEliminar = contenido.trim().toLowerCase();
-                if (!preguntaAEliminar) {
-                    return sock.sendMessage(from, { text: `⚠️ Ingresa la palabra clave a eliminar.\nEjemplo: .del precio` }, { quoted: m });
-                }
-
                 if (respuestasBot[preguntaAEliminar]) {
                     delete respuestasBot[preguntaAEliminar];
                     guardarRespuestas();
                     return sock.sendMessage(from, { text: `🗑️ Se eliminó la respuesta para: "*${preguntaAEliminar}*"` }, { quoted: m });
                 } else {
-                    return sock.sendMessage(from, { text: `❌ No existe ninguna respuesta guardada con la palabra "*${preguntaAEliminar}*"` }, { quoted: m });
+                    return sock.sendMessage(from, { text: `❌ No existe respuesta para "*${preguntaAEliminar}*"` }, { quoted: m });
                 }
             }
 
-            // COMANDO 3: VER TODAS (.ver)
+            // VER TODAS: .ver
             if (command === 'ver' || command === 'respuestas') {
                 const llaves = Object.keys(respuestasBot);
                 if (llaves.length === 0) {
-                    return sock.sendMessage(from, { text: `📂 No hay respuestas configuradas actualmente.` }, { quoted: m });
+                    return sock.sendMessage(from, { text: `📂 No hay respuestas configuradas.` }, { quoted: m });
                 }
 
                 let lista = `📋 *CATÁLOGO DE RESPUESTAS AUTOMÁTICAS*\n\n`;
@@ -123,17 +180,13 @@ async function iniciarBot() {
             }
         }
 
-        // ===================================================
-        // 🤖 RESPUESTA AUTOMÁTICA AL CLIENTE
-        // ===================================================
+        // --- RESPUESTA AUTOMÁTICA AL CLIENTE ---
         const mensajeEnMinusculas = textoCliente.toLowerCase();
 
-        // 1. Coincidencia exacta
         if (respuestasBot[mensajeEnMinusculas]) {
             return await sock.sendMessage(from, { text: respuestasBot[mensajeEnMinusculas] }, { quoted: m });
         }
 
-        // 2. Coincidencia si el mensaje contiene la palabra clave
         for (const clave in respuestasBot) {
             if (mensajeEnMinusculas.includes(clave)) {
                 return await sock.sendMessage(from, { text: respuestasBot[clave] }, { quoted: m });
