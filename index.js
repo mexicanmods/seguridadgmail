@@ -2,12 +2,16 @@ const {
     default: makeWASocket,
     useMultiFileAuthState,
     DisconnectReason,
-    fetchLatestBaileysVersion
+    fetchLatestBaileysVersion,
+    downloadContentFromMessage
 } = require('@whiskeysockets/baileys');
 const express = require('express');
 const pino = require('pino');
+const axios = require('axios');
+const yts = require('yt-search');
+const { Sticker, StickerTypes } = require('wa-sticker-formatter');
 
-// --- SERVIDOR EXPRESS PARA RENDER Y UPTIMEROBOT ---
+// --- SERVIDOR EXPRESS (RENDER / UPTIMEROBOT) ---
 const app = express();
 const PORT = process.env.PORT || 3000;
 let currentQR = null;
@@ -38,724 +42,35 @@ app.get('/', (req, res) => {
 
 app.listen(PORT, () => console.log(`Servidor web corriendo en puerto ${PORT}`));
 
-// --- TEXTO DEL MENÚ PERSONALIZADO ---
-const MENU_TEXT = `╭───❀ ☁️INFO DE USUARIO☁️
-│🗣️ NOMBRE: streaming samantha
-│📝 EXP: 64
-│🍬 DULCES: 0
-│✨ NIVEL: 3
-╰───❀
+// --- BASE DE DATOS EN MEMORIA (ECONOMÍA Y CONFIGURACIÓN) ---
+const BOT_NAME = 'SAMANTHA LA HACKER BOT';
+const PREFIX = '.';
+const usersDB = {};
+const dynamicTexts = {
+    stock: '📌 *STOCK DISPONIBLE*\n- Cuentas Premium: Disponibles\n- Diamantes FF: En stock',
+    pago: '💳 *MÉTODOS DE PAGO 1*\n- Banco/Tarjeta: 1234-5678-9012\n- Titular: Samantha',
+    pago2: '💳 *MÉTODOS DE PAGO 2*\n- USDT (TRC20): TXXXXXXXXXXXXX',
+    reglas: '📜 *REGLAS DEL GRUPO*\n1. Respeto entre miembros.\n2. No Spam.\n3. Cuidar la privacidad.'
+};
 
-╭───❀ ☁️INFO DEL BOT☁️
-│🤖 BOT: SAMANTHA LA HACKER BOT
-│👑 CREADOR: SAMANTHA LA HACKER
-│⏰ ACTIVO: 24/7 Online
-│📆 FECHA: martes, 18 de agosto de 2026
-╰───❀
+function getUser(jid) {
+    if (!usersDB[jid]) {
+        usersDB[jid] = { exp: 10, dulces: 0, nivel: 1, banco: 100, afk: -1, afkReason: '' };
+    }
+    return usersDB[jid];
+}
 
-╭───❀ *✨ANIME✨*
-│🏍️ .5
-│🏍️ .abrazar
-│🏍️ .aburrido
-│🏍️ .acurrucarse
-│🏍️ .angry
-│🏍️ .aplaudir
-│🏍️ .asustada
-│🏍️ .asustado
-│🏍️ .avergonzarse
-│🏍️ .bailar
-│🏍️ .bath
-│🏍️ .bañarse
-│🏍️ .beso
-│🏍️ .bite
-│🏍️ .bleh
-│🏍️ .blush
-│🏍️ .bofetada
-│🏍️ .bored
-│🏍️ .borracho
-│🏍️ .bully
-│🏍️ .bullying
-│🏍️ .cafe
-│🏍️ .café
-│🏍️ .caminar
-│🏍️ .clap
-│🏍️ .coffee
-│🏍️ .comer
-│🏍️ .correr
-│🏍️ .cringe
-│🏍️ .cry
-│🏍️ .cuddle
-│🏍️ .dance
-│🏍️ .dormir
-│🏍️ .drama
-│🏍️ .dramatic
-│🏍️ .drunk
-│🏍️ .eat
-│🏍️ .embarazar
-│🏍️ .enamorada
-│🏍️ .enamorado
-│🏍️ .enojado
-│🏍️ .escupir
-│🏍️ .facepalm
-│🏍️ .feliz
-│🏍️ .fumar
-│🏍️ .golpear
-│🏍️ .guiñar
-│🏍️ .handhold
-│🏍️ .happy
-│🏍️ .harem
-│🏍️ .highfive
-│🏍️ .hola
-│🏍️ .hug
-│🏍️ .infoanime
-│🏍️ .kill
-│🏍️ .kiss
-│🏍️ .kisscheek
-│🏍️ .lamer
-│🏍️ .laugh
-│🏍️ .lengua
-│🏍️ .lick
-│🏍️ .llorar
-│🏍️ .loli
-│🏍️ .love
-│🏍️ .mano
-│🏍️ .matar
-│🏍️ .morder
-│🏍️ .muak
-│🏍️ .ola
-│🏍️ .palmada
-│🏍️ .palmadita
-│🏍️ .pat
-│🏍️ .pegar
-│🏍️ .pensar
-│🏍️ .picar
-│🏍️ .pisar
-│🏍️ .poke
-│🏍️ .pout
-│🏍️ .ppcouple
-│🏍️ .preg
-│🏍️ .presumir
-│🏍️ .preñar
-│🏍️ .pucheros
-│🏍️ .punch
-│🏍️ .reirse
-│🏍️ .run
-│🏍️ .sad
-│🏍️ .scared
-│🏍️ .seduce
-│🏍️ .seducir
-│🏍️ .shy
-│🏍️ .slap
-│🏍️ .sleep
-│🏍️ .smile
-│🏍️ .smoke
-│🏍️ .smug
-│🏍️ .sonreir
-│🏍️ .sonrojarse
-│🏍️ .spit
-│🏍️ .step
-│🏍️ .think
-│🏍️ .timida
-│🏍️ .timido
-│🏍️ .triste
-│🏍️ .waifu
-│🏍️ .walk
-│🏍️ .wave
-│🏍️ .wink
-╰───❀
+async function getAdminStatus(sock, groupId, participantJid) {
+    try {
+        const groupMetadata = await sock.groupMetadata(groupId);
+        const participant = groupMetadata.participants.find(p => p.id === participantJid);
+        return participant && (participant.admin === 'admin' || participant.admin === 'superadmin');
+    } catch {
+        return false;
+    }
+}
 
-╭───❀ *✨BUSCADOR✨*
-│🏍️ .tiktoksearch <txt>
-╰───❀
-
-╭───❀ *✨DESCARGAS✨*
-│🏍️ .yta2
-│🏍️ .ytv2
-╰───❀
-
-╭───❀ *✨DOWNLOAD✨*
-│🏍️ .animedl
-│🏍️ .apkmod
-│🏍️ .gitclone
-│🏍️ .hentai
-│🏍️ .imagen
-│🏍️ .mediafire
-│🏍️ .mediafire2
-│🏍️ .mega
-│🏍️ .pinterest
-│🏍️ .playaudio
-│🏍️ .playvideo
-│🏍️ .soundcloud2
-│🏍️ .stickerlydl <url>
-│🏍️ .tiktokmp3 *<url>*
-│🏍️ .twitter
-│🏍️ .xnxx
-│🏍️ .xvideos
-│🏍️ .yta <url>
-│🏍️ .ytmp3 + [texto/link]
-│🏍️ .ytmp3doc + [texto/link]
-│🏍️ .ytmp4 + [texto/link]
-│🏍️ .ytmp4doc + [texto/link]
-│🏍️ .ytv
-╰───❀
-
-╭───❀ *✨DOWNLOADER✨*
-│🏍️ .facebook
-│🏍️ .fb
-│🏍️ .splay
-│🏍️ .tiktok
-│🏍️ .tt
-╰───❀
-
-╭───❀ *✨ECONOMY✨*
-│🏍️ .apostar
-│🏍️ .cf
-│🏍️ .crimen
-│🏍️ .einfo
-│🏍️ .minar
-│🏍️ .ruleta
-│🏍️ .trabajar
-╰───❀
-
-╭───❀ *✨ECONOMÍA✨*
-│🏍️ .cofre
-╰───❀
-
-╭───❀ *✨FF✨*
-│🏍️ .maxeos
-│🏍️ .setmaxeos <texto>
-╰───❀
-
-╭───❀ *✨FUN✨*
-│🏍️ .afk
-│🏍️ .chiste
-│🏍️ .doxear
-│🏍️ .doxeo
-│🏍️ .doxxeo
-│🏍️ .facto
-│🏍️ .formarpareja
-│🏍️ .gay
-│🏍️ .lesbiana
-│🏍️ .letra
-│🏍️ .loli
-│🏍️ .manca
-│🏍️ .manco
-│🏍️ .pajera
-│🏍️ .pajero
-│🏍️ .personalidad
-│🏍️ .pokedex
-│🏍️ .prostituta
-│🏍️ .prostituto
-│🏍️ .puta
-│🏍️ .puto
-│🏍️ .rata
-│🏍️ .ruletamuerte
-│🏍️ .ship
-│🏍️ .shippear
-│🏍️ .sorteo
-│🏍️ .top
-╰───❀
-
-╭───❀ *✨GACHA✨*
-│🏍️ .buyc
-│🏍️ .claim
-│🏍️ .delchar
-│🏍️ .delclaimmsg
-│🏍️ .delfav
-│🏍️ .favtop
-│🏍️ .ginfo
-│🏍️ .giveallharem
-│🏍️ .regalar
-│🏍️ .removesale
-│🏍️ .robwaifu
-│🏍️ .rollwaifu
-│🏍️ .rw
-│🏍️ .sell
-│🏍️ .serieinfo
-│🏍️ .serielist
-│🏍️ .setclaim
-│🏍️ .setfav
-│🏍️ .topwaifus
-│🏍️ .trade
-│🏍️ .ver
-│🏍️ .vote
-│🏍️ .waifuvideo
-│🏍️ .wimage
-│🏍️ .winfo
-│🏍️ .wshop
-╰───❀
-
-╭───❀ *✨GAME✨*
-│🏍️ .ppt
-│🏍️ .trivia
-│🏍️ .triviascore
-╰───❀
-
-╭───❀ *✨GROUP✨*
-│🏍️ .abrir
-│🏍️ .addwarn
-│🏍️ .admins
-│🏍️ .advertencia
-│🏍️ .advlist
-│🏍️ .boletos
-│🏍️ .bot
-│🏍️ .canva
-│🏍️ .cerrar
-│🏍️ .close
-│🏍️ .combos
-│🏍️ .crunchyroll
-│🏍️ .delete
-│🏍️ .delprimary
-│🏍️ .delwarn
-│🏍️ .demote
-│🏍️ .diamantes
-│🏍️ .disney
-│🏍️ .enlace
-│🏍️ .fantasmas
-│🏍️ .ficha
-│🏍️ .gpbanner
-│🏍️ .gpdesc
-│🏍️ .gpname
-│🏍️ .groupdesc
-│🏍️ .groupimg
-│🏍️ .groupname
-│🏍️ .inactivos
-│🏍️ .infogrupo
-│🏍️ .invite
-│🏍️ .kick
-│🏍️ .kickfantasmas
-│🏍️ .kickinactivos
-│🏍️ .libros
-│🏍️ .lids
-│🏍️ .link
-│🏍️ .listadv
-│🏍️ .lotes
-│🏍️ .max
-│🏍️ .metodos
-│🏍️ .mute
-│🏍️ .netflix
-│🏍️ .open
-│🏍️ .pago
-│🏍️ .pago2
-│🏍️ .paramunt
-│🏍️ .peliculas
-│🏍️ .prime
-│🏍️ .promote
-│🏍️ .reglas
-│🏍️ .revoke
-│🏍️ .robux
-│🏍️ .setboletos + texto
-│🏍️ .setcanva <texto>
-│🏍️ .setcombos <texto>
-│🏍️ .setdiamantes + texto
-│🏍️ .setdisney <texto>
-│🏍️ .setficha + texto
-│🏍️ .setlibros + texto
-│🏍️ .setlotes + texto
-│🏍️ .setmax <texto>
-│🏍️ .setmetodos + texto
-│🏍️ .setnetflix <texto>
-│🏍️ .setpago <texto>
-│🏍️ .setpago2 <texto>
-│🏍️ .setpago3 <texto>
-│🏍️ .setparamunt
-│🏍️ .setpeliculas + texto
-│🏍️ .setprimary
-│🏍️ .setprime <texto>
-│🏍️ .setreglas + texto
-│🏍️ .setrobux + texto
-│🏍️ .setstock <texto>
-│🏍️ .setstock2 <texto>
-│🏍️ .setstock3 <texto>
-│🏍️ .settramites <texto>
-│🏍️ .setyoutube + texto
-│🏍️ .stock
-│🏍️ .stock2
-│🏍️ .todos
-│🏍️ .tramites
-│🏍️ .unmute
-│🏍️ .unwarn
-│🏍️ .warn
-│🏍️ .youtube
-╰───❀
-
-╭───❀ *✨GRUPO✨*
-│🏍️ .hidetag
-│🏍️ .kicknum
-│🏍️ .listanum
-│🏍️ .listnum
-╰───❀
-
-╭───❀ *✨HERRAMIENTAS✨*
-│🏍️ .tts2 texto|modelo
-╰───❀
-
-╭───❀ *✨INFO✨*
-│🏍️ .creador
-│🏍️ .estado
-│🏍️ .ping
-╰───❀
-
-╭───❀ *✨LOGO✨*
-│🏍️ .1917style + texto
-│🏍️ .advancedglow + texto
-│🏍️ .blackpinklogo + texto
-│🏍️ .blackpinkstyle + texto
-│🏍️ .cartoonstyle + texto
-│🏍️ .deletingtext + texto
-│🏍️ .effectclouds + texto
-│🏍️ .flag3dtext + texto
-│🏍️ .flagtext + texto
-│🏍️ .freecreate + texto
-│🏍️ .galaxystyle + texto
-│🏍️ .galaxywallpaper + texto
-│🏍️ .glitchtext + texto
-│🏍️ .glowingtext + texto
-│🏍️ .gradienttext + texto
-│🏍️ .lighteffects + texto
-│🏍️ .logomaker + texto
-│🏍️ .luxurygold + texto
-│🏍️ .makingneon + texto
-│🏍️ .neonglitch + texto
-│🏍️ .papercutstyle + texto
-│🏍️ .pixelglitch + texto
-│🏍️ .royaltext + texto
-│🏍️ .sandsummer + texto
-│🏍️ .summerbeach + texto
-│🏍️ .typographytext + texto
-│🏍️ .underwatertext + texto
-│🏍️ .watercolortext + texto
-│🏍️ .writetext + texto
-╰───❀
-
-╭───❀ *✨MAIN✨*
-│🏍️ .fixmsg
-│🏍️ .invite
-│🏍️ .reporte
-│🏍️ .script
-│🏍️ .speedtest
-│🏍️ .suggest
-╰───❀
-
-╭───❀ *✨MAKER✨*
-│🏍️ .1917style + texto
-│🏍️ .advancedglow + texto
-│🏍️ .blackpinklogo + texto
-│🏍️ .blackpinkstyle + texto
-│🏍️ .cartoonstyle + texto
-│🏍️ .deletingtext + texto
-│🏍️ .effectclouds + texto
-│🏍️ .flag3dtext + texto
-│🏍️ .flagtext + texto
-│🏍️ .freecreate + texto
-│🏍️ .galaxystyle + texto
-│🏍️ .galaxywallpaper + texto
-│🏍️ .glitchtext + texto
-│🏍️ .glowingtext + texto
-│🏍️ .gradienttext + texto
-│🏍️ .lighteffects + texto
-│🏍️ .logomaker + texto
-│🏍️ .luxurygold + texto
-│🏍️ .makingneon + texto
-│🏍️ .neonglitch + texto
-│🏍️ .papercutstyle + texto
-│🏍️ .pixelglitch + texto
-│🏍️ .royaltext + texto
-│🏍️ .sandsummer + texto
-│🏍️ .summerbeach + texto
-│🏍️ .typographytext + texto
-│🏍️ .underwatertext + texto
-│🏍️ .watercolortext + texto
-│🏍️ .writetext + texto
-╰───❀
-
-╭───❀ *✨MENU✨*
-│🏍️ .menudescargas
-│🏍️ .menugacha
-│🏍️ .menulogos
-╰───❀
-
-╭───❀ *✨MODS✨*
-│🏍️ .banlist
-│🏍️ .banned
-│🏍️ .block
-│🏍️ .blocklist
-│🏍️ .unban
-│🏍️ .unblock
-╰───❀
-
-╭───❀ *✨MUSIC✨*
-│🏍️ .play <texto>
-│🏍️ .soundcloud + [texto]
-╰───❀
-
-╭───❀ *✨NABLE✨*
-│🏍️ .aceptarauto
-│🏍️ .antiarabe
-│🏍️ .antibot
-│🏍️ .antibot2
-│🏍️ .antibots
-│🏍️ .antifake
-│🏍️ .antilink
-│🏍️ .antilink2
-│🏍️ .antiocultar
-│🏍️ .antiprivado
-│🏍️ .antiprivate
-│🏍️ .antispam
-│🏍️ .antispam2
-│🏍️ .antisubbots
-│🏍️ .antiver
-│🏍️ .antivirtuales
-│🏍️ .audios
-│🏍️ .autoaceptar
-│🏍️ .autorechazar
-│🏍️ .autorespond
-│🏍️ .autoresponder
-│🏍️ .avisos
-│🏍️ .bienvenida
-│🏍️ .bye
-│🏍️ .detect
-│🏍️ .economia
-│🏍️ .economy
-│🏍️ .jadibotmd
-│🏍️ .modejadibot
-│🏍️ .modoadmin
-│🏍️ .modohorny
-│🏍️ .nsfw
-│🏍️ .reaccion
-│🏍️ .reaction
-│🏍️ .rechazarauto
-│🏍️ .restrict
-│🏍️ .restringir
-│🏍️ .soloadmin
-│🏍️ .welcome
-╰───❀
-
-╭───❀ *✨NSFW✨*
-│🏍️ .anal/culiar + <mention>
-│🏍️ .blowjob/mamada + <mention>
-│🏍️ .boobjob/rusa + <mention>
-│🏍️ .culo
-│🏍️ .cum/leche + <mention>
-│🏍️ .danbooru
-│🏍️ .fap/paja + <mention>
-│🏍️ .follar + <mention>
-│🏍️ .footjob/pies + <mention>
-│🏍️ .fuck/coger + <mention>
-│🏍️ .gelbooru
-│🏍️ .grabboobs/agarrartetas + <mention>
-│🏍️ .grop/manosear + <mention>
-│🏍️ .hentai2
-│🏍️ .lickpussy/coño + <mention>
-│🏍️ .nsfw1
-│🏍️ .nsfw2
-│🏍️ .pack
-│🏍️ .pack2
-│🏍️ .r34
-│🏍️ .sexo/sex + <mention>
-│🏍️ .sixnine/69 + <mention>
-│🏍️ .spank/nalgada + <mention>
-│🏍️ .suckboobs/chupartetas + <mention>
-│🏍️ .tetas
-│🏍️ .undress/encuerar + <mention>
-│🏍️ .yuri/tijeras + <mention>
-╰───❀
-
-╭───❀ *✨OWNER✨*
-│🏍️ .$
-│🏍️ .=> 
-│🏍️ .> 
-│🏍️ .addcoin
-│🏍️ .addowner
-│🏍️ .addprem
-│🏍️ .addxp
-│🏍️ .autoadmin
-│🏍️ .backup
-│🏍️ .cleartmp
-│🏍️ .copia
-│🏍️ .delai
-│🏍️ .deletefile
-│🏍️ .delowner
-│🏍️ .delprem
-│🏍️ .dsowner
-│🏍️ .getplugin
-│🏍️ .ip <alamat ip>
-│🏍️ .listonline
-│🏍️ .listprem
-│🏍️ .prefix
-│🏍️ .resetear
-│🏍️ .resetuser
-│🏍️ .restart
-│🏍️ .savefile
-│🏍️ .saveplugin
-│🏍️ .update
-│🏍️ .vaciartmp
-╰───❀
-
-╭───❀ *✨PROFILE✨*
-│🏍️ .divorce
-│🏍️ .marry
-╰───❀
-
-╭───❀ *✨RG✨*
-│🏍️ .delbirth
-│🏍️ .deldesc
-│🏍️ .deldescription
-│🏍️ .delgenre
-│🏍️ .premium
-│🏍️ .profile
-│🏍️ .reg
-│🏍️ .setbirth
-│🏍️ .setdesc
-│🏍️ .setdescription
-│🏍️ .setgenero
-│🏍️ .setgenre
-│🏍️ .setprofile
-╰───❀
-
-╭───❀ *✨RPG✨*
-│🏍️ .adventure
-│🏍️ .aventura
-│🏍️ .bal
-│🏍️ .baltop
-│🏍️ .cazar
-│🏍️ .daily
-│🏍️ .depositar
-│🏍️ .dungeon
-│🏍️ .fish
-│🏍️ .heal
-│🏍️ .hunt
-│🏍️ .lboard
-│🏍️ .levelup
-│🏍️ .mazmorra
-│🏍️ .mensual
-│🏍️ .monthly
-│🏍️ .pay
-│🏍️ .pescar
-│🏍️ .retirar
-│🏍️ .rob
-│🏍️ .semanal
-│🏍️ .slot <apuesta>
-│🏍️ .slut
-│🏍️ .weekly
-╰───❀
-
-╭───❀ *✨SEARCH✨*
-│🏍️ .applemusic
-│🏍️ .applemusicsearch <canción>
-│🏍️ .capcut <texto>
-│🏍️ .fdroid
-│🏍️ .fdroidsearch
-│🏍️ .mediafiresearch <texto>
-│🏍️ .playstore <texto>
-│🏍️ .soundcloudsearch <texto>
-│🏍️ .spotifysearch *<texto>*
-│🏍️ .stickerly <texto>
-│🏍️ .wagroups
-│🏍️ .wgrupos
-│🏍️ .wpgroups
-│🏍️ .ytbuscar <texto>
-│🏍️ .ytsearch2 <texto>
-╰───❀
-
-╭───❀ *✨SERBOT✨*
-│🏍️ .botlist
-│🏍️ .code
-│🏍️ .qr
-╰───❀
-
-╭───❀ *✨SOCKET✨*
-│🏍️ .join
-│🏍️ .leave
-│🏍️ .logout
-│🏍️ .public
-│🏍️ .reload
-│🏍️ .salir
-│🏍️ .self
-│🏍️ .setbio
-│🏍️ .setimage
-│🏍️ .setpfp
-│🏍️ .setstatus
-│🏍️ .setuser
-│🏍️ .setusername
-╰───❀
-
-╭───❀ *✨STALK✨*
-│🏍️ .githubstalk <usuario>
-│🏍️ .tiktokstalk *<usuario>*
-╰───❀
-
-╭───❀ *✨STICKER✨*
-│🏍️ .brat
-│🏍️ .bratv
-│🏍️ .emojimix
-│🏍️ .pfp
-│🏍️ .qc
-│🏍️ .robar
-│🏍️ .sticker
-│🏍️ .stickerly <texto>
-│🏍️ .stickerlydl <url>
-│🏍️ .take
-│🏍️ .wm
-╰───❀
-
-╭───❀ *✨TOOLS✨*
-│🏍️ .aivoz
-│🏍️ .avisoschannel
-│🏍️ .bard
-│🏍️ .cal
-│🏍️ .catbox
-│🏍️ .chatgpt
-│🏍️ .dalle
-│🏍️ .delmeta
-│🏍️ .eliminarfotochannel
-│🏍️ .flux
-│🏍️ .gemini
-│🏍️ .get
-│🏍️ .hd
-│🏍️ .ia
-│🏍️ .iavoz
-│🏍️ .inspeccionar
-│🏍️ .inspect
-│🏍️ .lid
-│🏍️ .luminai
-│🏍️ .lyrics
-│🏍️ .mylid
-│🏍️ .noseguircanal
-│🏍️ .nosilenciarcanal
-│🏍️ .npmdl
-│🏍️ .nuevadescchannel
-│🏍️ .nuevafotochannel
-│🏍️ .nuevonombrecanal
-│🏍️ .openai
-│🏍️ .reaccioneschannel
-│🏍️ .reactioneschannel
-│🏍️ .reenviar
-│🏍️ .resiviravisos
-│🏍️ .say
-│🏍️ .seguircanal
-│🏍️ .setmeta
-│🏍️ .silenciarcanal
-│🏍️ .ss
-│🏍️ .ssweb
-│🏍️ .syntax
-│🏍️ .tenor
-│🏍️ .toimg
-│🏍️ .tourl
-│🏍️ .translate
-│🏍️ .upload
-│🏍️ .ver
-│🏍️ .vozia
-│🏍️ .whatmusic <audio/video>
-│🏍️ .whatmusic2
-│🏍️ .wikipedia
-╰───❀
-
-╭───❀ *✨YOUTUBE✨*
-│🏍️ .ytdl <búsqueda>
-╰───❀`;
-
-// --- CONEXIÓN DE WHATSAPP ---
+// --- CONEXIÓN PRINCIPAL CON BAILEYS ---
 async function connectToWhatsApp() {
     const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
     const { version } = await fetchLatestBaileysVersion();
@@ -763,19 +78,15 @@ async function connectToWhatsApp() {
     const sock = makeWASocket({
         version,
         logger: pino({ level: 'silent' }),
-        auth: state
+        auth: state,
+        printQRInTerminal: true
     });
 
     sock.ev.on('creds.update', saveCreds);
 
     sock.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect, qr } = update;
-
-        if (qr) {
-            currentQR = qr;
-            isConnected = false;
-        }
-
+        if (qr) { currentQR = qr; isConnected = false; }
         if (connection === 'close') {
             isConnected = false;
             const shouldReconnect = (lastDisconnect?.error)?.output?.statusCode !== DisconnectReason.loggedOut;
@@ -783,7 +94,7 @@ async function connectToWhatsApp() {
         } else if (connection === 'open') {
             isConnected = true;
             currentQR = null;
-            console.log('✅ Conectado exitosamente a WhatsApp');
+            console.log(`✅ [${BOT_NAME}] Conectado correctamente.`);
         }
     });
 
@@ -793,13 +104,210 @@ async function connectToWhatsApp() {
         if (!m.message || m.key.fromMe) return;
 
         const from = m.key.remoteJid;
+        const isGroup = from.endsWith('@g.us');
+        const sender = m.key.participant || m.key.remoteJid;
+        const user = getUser(sender);
+
         const body = m.message.conversation ||
-                     m.message.extendedTextMessage?.text || '';
+                     m.message.extendedTextMessage?.text ||
+                     m.message.imageMessage?.caption ||
+                     m.message.videoMessage?.caption || '';
 
-        const command = body.trim().toLowerCase();
+        // Ganancia de EXP por mensaje
+        user.exp += 2;
 
-        if (command === '.menu' || command === '.help' || command === '.samantha') {
-            await sock.sendMessage(from, { text: MENU_TEXT }, { quoted: m });
+        if (!body.startsWith(PREFIX)) return;
+
+        const args = body.slice(PREFIX.length).trim().split(/ +/);
+        const command = args.shift().toLowerCase();
+        const text = args.join(' ');
+
+        // ROUTER DE COMANDOS
+        try {
+            switch (command) {
+                // --- COMANDOS PRINCIPALES Y MENÚ ---
+                case 'menu':
+                case 'help':
+                case 'samantha':
+                    const menu = `╭───❀ ☁️INFO DE USUARIO☁️
+│🗣️ USUARIO: @${sender.split('@')[0]}
+│📝 EXP: ${user.exp} | 🍬 DULCES: ${user.dulces} | ✨ NIVEL: ${user.nivel}
+╰───❀
+
+╭───❀ ☁️INFO DEL BOT☁️
+│🤖 BOT: ${BOT_NAME}
+│👑 CREADOR: SAMANTHA LA HACKER
+│⏰ STATUS: 24/7 Activo
+╰───❀
+
+╭───❀ *✨COMANDOS DESTACADOS✨*
+│🏍️ .abrir / .cerrar
+│🏍️ .stock / .setstock <texto>
+│🏍️ .pago / .pago2 / .setpago <texto>
+│🏍️ .sticker (Responde a una imagen)
+│🏍️ .play <nombre de canción>
+│🏍️ .tiktok <url> / .fb <url>
+│🏍️ .trabajar / .minar / .bal
+│🏍️ .hidetag <mensaje>
+│🏍️ .doxear / .gay / .ship
+╰───❀`;
+                    await sock.sendMessage(from, { text: menu, mentions: [sender] }, { quoted: m });
+                    break;
+
+                // --- ADMINISTRACIÓN DE GRUPO ---
+                case 'abrir':
+                    if (!isGroup) return sock.sendMessage(from, { text: 'Solo en grupos.' });
+                    if (!(await getAdminStatus(sock, from, sender))) return sock.sendMessage(from, { text: '⚠️ Requiere ser Admin.' });
+                    await sock.groupSettingUpdate(from, 'not_announcement');
+                    await sock.sendMessage(from, { text: `*[${BOT_NAME}]* 🔓 Grupo abierto a todos los miembros.` });
+                    break;
+
+                case 'cerrar':
+                case 'close':
+                    if (!isGroup) return sock.sendMessage(from, { text: 'Solo en grupos.' });
+                    if (!(await getAdminStatus(sock, from, sender))) return sock.sendMessage(from, { text: '⚠️ Requiere ser Admin.' });
+                    await sock.groupSettingUpdate(from, 'announcement');
+                    await sock.sendMessage(from, { text: `*[${BOT_NAME}]* 🔒 Grupo cerrado (Solo admins pueden enviar mensajes).` });
+                    break;
+
+                case 'hidetag':
+                case 'todos':
+                    if (!isGroup) return;
+                    if (!(await getAdminStatus(sock, from, sender))) return sock.sendMessage(from, { text: '⚠️ Solo Admins.' });
+                    const metadata = await sock.groupMetadata(from);
+                    const participants = metadata.participants.map(p => p.id);
+                    await sock.sendMessage(from, { text: text || '📣 ¡Notificación a todos!', mentions: participants });
+                    break;
+
+                case 'kick':
+                    if (!isGroup || !(await getAdminStatus(sock, from, sender))) return;
+                    const mentioned = m.message.extendedTextMessage?.contextInfo?.mentionedJid?.[0];
+                    if (mentioned) {
+                        await sock.groupParticipantsUpdate(from, [mentioned], 'remove');
+                        await sock.sendMessage(from, { text: '❌ Miembro eliminado.' });
+                    }
+                    break;
+
+                // --- INFORMACIÓN DE GRUPO Y NEGOCIO ---
+                case 'stock':
+                case 'stock2':
+                    await sock.sendMessage(from, { text: `*[${BOT_NAME}]*\n\n${dynamicTexts.stock}` }, { quoted: m });
+                    break;
+
+                case 'pago':
+                case 'pago2':
+                    await sock.sendMessage(from, { text: `*[${BOT_NAME}]*\n\n${dynamicTexts[command]}` }, { quoted: m });
+                    break;
+
+                case 'setstock':
+                case 'setpago':
+                case 'setpago2':
+                    if (isGroup && !(await getAdminStatus(sock, from, sender))) return;
+                    if (!text) return sock.sendMessage(from, { text: `Uso: .${command} <nuevo texto>` });
+                    const key = command.replace('set', '');
+                    dynamicTexts[key] = text;
+                    await sock.sendMessage(from, { text: `✅ Texto de *${key}* actualizado.` });
+                    break;
+
+                // --- STICKERS ---
+                case 'sticker':
+                case 's':
+                    const isImage = m.message.imageMessage || m.message.extendedTextMessage?.contextInfo?.quotedMessage?.imageMessage;
+                    if (!isImage) return sock.sendMessage(from, { text: 'Responde a una imagen con .sticker' });
+                    
+                    const stream = await downloadContentFromMessage(isImage, 'image');
+                    let buffer = Buffer.alloc(0);
+                    for await (const chunk of stream) buffer = Buffer.concat([buffer, chunk]);
+
+                    const sticker = new Sticker(buffer, {
+                        pack: BOT_NAME,
+                        author: 'Samantha La Hacker',
+                        type: StickerTypes.FULL
+                    });
+                    await sock.sendMessage(from, await sticker.toMessage());
+                    break;
+
+                // --- BÚSQUEDA Y DESCARGAS ---
+                case 'play':
+                case 'ytmp3':
+                    if (!text) return sock.sendMessage(from, { text: 'Ingresa el nombre de una canción o enlace de YouTube.' });
+                    await sock.sendMessage(from, { text: '🔍 Buscando audio...' });
+                    const search = await yts(text);
+                    const video = search.videos[0];
+                    if (!video) return sock.sendMessage(from, { text: 'No se encontraron resultados.' });
+                    
+                    await sock.sendMessage(from, { 
+                        text: `🎵 *${video.title}*\n⏱️ Duración: ${video.timestamp}\n🔗 ${video.url}\n\n*Enviando audio...*` 
+                    });
+                    break;
+
+                case 'tiktok':
+                case 'tt':
+                case 'fb':
+                case 'facebook':
+                    if (!text) return sock.sendMessage(from, { text: 'Ingresa una URL válida.' });
+                    await sock.sendMessage(from, { text: '📥 Procesando descarga de video...' });
+                    break;
+
+                // --- ECONOMÍA Y DIVERSIÓN ---
+                case 'trabajar':
+                    const ganado = Math.floor(Math.random() * 200) + 50;
+                    user.banco += ganado;
+                    await sock.sendMessage(from, { text: `💰 Trabajaste duro y ganaste $${ganado} monedas.` }, { quoted: m });
+                    break;
+
+                case 'minar':
+                    const diamantes = Math.floor(Math.random() * 5) + 1;
+                    user.dulces += diamantes;
+                    await sock.sendMessage(from, { text: `⛏️ Minaste y encontraste ${diamantes} dulces/gemas.` }, { quoted: m });
+                    break;
+
+                case 'bal':
+                case 'einfo':
+                    await sock.sendMessage(from, { text: `🏦 *Balance de @${sender.split('@')[0]}*\n💵 Banco: $${user.banco}\n🍬 Dulces: ${user.dulces}\n✨ EXP: ${user.exp}`, mentions: [sender] });
+                    break;
+
+                case 'doxear':
+                case 'doxeo':
+                    const fakeIp = `${Math.floor(Math.random()*255)}.${Math.floor(Math.random()*255)}.${Math.floor(Math.random()*255)}.${Math.floor(Math.random()*255)}`;
+                    await sock.sendMessage(from, { text: `🔍 *DOXEO EXITOSO*\n👤 Objetivo: ${text || 'Usuario'}\n🌐 IP: ${fakeIp}\n🏠 Nivel de Peligro: 99.9%` });
+                    break;
+
+                case 'gay':
+                case 'pajero':
+                case 'manco':
+                    const porcentaje = Math.floor(Math.random() * 100);
+                    await sock.sendMessage(from, { text: `📊 El nivel de *${command.toUpperCase()}* de ${text || 'este usuario'} es del *${porcentaje}%*` });
+                    break;
+
+                case 'ship':
+                case 'formarpareja':
+                    if (!isGroup) return;
+                    const groupData = await sock.groupMetadata(from);
+                    const members = groupData.participants;
+                    const p1 = members[Math.floor(Math.random() * members.length)].id;
+                    const p2 = members[Math.floor(Math.random() * members.length)].id;
+                    await sock.sendMessage(from, { 
+                        text: `💖 *NUEVA PAREJA FORMADA*\n👩‍❤️‍👨 @${p1.split('@')[0]} ❤️ @${p2.split('@')[0]}\nCompatibilidad: ${Math.floor(Math.random()*50)+50}%`,
+                        mentions: [p1, p2]
+                    });
+                    break;
+
+                // --- REACCIONES Y OTROS ---
+                case 'kiss':
+                case 'beso':
+                case 'hug':
+                case 'abrazar':
+                case 'slap':
+                case 'bofetada':
+                    await sock.sendMessage(from, { text: `✨ @${sender.split('@')[0]} ejecutó la acción *${command}* en el chat.`, mentions: [sender] });
+                    break;
+
+                default:
+                    break;
+            }
+        } catch (error) {
+            console.error(`Error procesando .${command}:`, error);
         }
     });
 }
